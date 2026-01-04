@@ -1,1 +1,356 @@
 
+
+
+clear; close all; clc;
+
+%% ===============================================================
+% GLOBAL SETTINGS
+% ===============================================================
+set(groot, 'DefaultAxesFontName', 'Arial'); % Arial Font
+set(groot, 'DefaultTextFontName', 'Arial'); % Arial Font for titles/labels
+set(groot, 'DefaultAxesFontSize', 26);      % 18pt Font Size
+set(groot, 'DefaultLineLineWidth', 2);      % 2pt Line Width
+
+set(groot, 'DefaultAxesBox', 'off');
+set(groot, 'DefaultAxesTickDir', 'out');
+set(groot, 'DefaultAxesLineWidth', 1);
+
+c_task = [0.60 0.60 0.60];    % task shading color
+c_task_legend = [0.8 0.8 0.8]; % Darker Gray for legend marker
+
+%% ===============================================================
+% DATA LOADING AND PROCESSING (KEEPING USER'S ORIGINAL CODE)
+% NOTE: The KalmanDOI and func_filter functions are REQUIRED.
+% ===============================================================
+
+Fs = 1; integrationTime = 1;
+
+% --- HEALTHY ---
+H_pre_peak = 9; H_post_peak = 21; H_blkL = H_pre_peak + H_post_peak;
+load('Healthy_BFI_MeanStd.mat', 'tVec', 'EG_mean', 'LG_mean');
+H_EG = EG_mean(:); H_LG = LG_mean(:); H_N = min(length(H_EG), length(H_LG));
+H_EG = H_EG(1:H_N); H_LG = H_LG(1:H_N);
+H_EG = H_EG-min(H_EG); H_EG = H_EG./max(H_EG);
+H_LG = H_LG-min(H_LG); H_LG = H_LG./max(H_LG);
+H_EG_detr = func_filter(detrend(H_EG), Fs, 0.035, 0.43);
+H_LG_detr = func_filter(detrend(H_LG), Fs, 0.031, 0.20);
+H_nTrials = 5; H_interval = 60; H_taskDur = 5; H_first = 65;
+H_expected_times = H_first + (0:H_nTrials-1)*H_interval;
+H_searchE = 50; H_searchL = 30;
+H_peakE = zeros(H_nTrials,1); H_peakL = zeros(H_nTrials,1); H_tVec = (0:H_N-1)';
+
+for i = 1:H_nTrials
+    EGc = H_expected_times(i)+1; LGc = H_expected_times(i)+5;
+    s1 = max(EGc-H_searchE,1); s2 = min(EGc+H_searchE,length(H_EG_detr)); [~,idx]=max(H_EG_detr(s1:s2)); H_peakE(i)=s1+idx-1;
+    s1=max(LGc-H_searchL,1); s2=min(LGc+H_searchL,length(H_LG_detr)); [~,idx]=max(H_LG_detr(s1:s2)); H_peakL(i)=s1+idx-1;
+end
+H_u = zeros(length(H_LG_detr),1);
+for i=1:H_nTrials
+    [~,on]=min(abs(H_tVec-H_expected_times(i))); off=min(on+H_taskDur*Fs-1, length(H_u)); H_u(on:off)=1;
+end
+H_yd=[H_EG_detr, H_LG_detr];
+[~, H_LG_reg, ~] = KalmanDOI(fillmissing(H_yd,'linear'), H_u, Fs);
+H_EG_blk = nan(H_blkL, H_nTrials); H_LG_blk = nan(H_blkL, H_nTrials);
+for i=1:H_nTrials
+    pk=H_peakE(i); s1=pk-H_pre_peak; s2=pk+H_post_peak-1;
+    if s1>0 && s2<=length(H_EG_detr); H_EG_blk(:,i) = H_EG_detr(s1:s2) - mean(H_EG_detr(s1:s1+H_pre_peak-1)); end
+    pk=H_peakL(i); s1=pk-H_pre_peak; s2=pk+H_post_peak-1;
+    if s1>0 && s2<=length(H_LG_reg); H_LG_blk(:,i) = H_LG_reg(s1:s2) - mean(H_LG_reg(s1:s1+H_pre_peak-1)); end
+end
+H_EG_meanBlk = mean(H_EG_blk,2,'omitnan'); H_LG_meanBlk = mean(H_LG_blk,2,'omitnan');
+EG_stdBlk_H  = std(H_EG_blk,0,2,'omitnan')/sqrt(H_nTrials);
+LG_stdBlk_H  = std(H_LG_blk,0,2,'omitnan')/sqrt(H_nTrials);
+H_EG_meanBlk = H_EG_meanBlk - H_EG_meanBlk(1); H_LG_meanBlk = H_LG_meanBlk - H_LG_meanBlk(1);
+H_tblk = (0:H_blkL-1)';
+
+
+% --- COVERT ---
+C_pre_peak = 9; C_post_peak = 21; C_blkL = C_pre_peak + C_post_peak;
+S = load('BFI_Covert2_OptProp.mat'); M = S.DB_all_clean;
+C_EG = mean(M(1,:),1)'; C_LG = mean(M(2:3,:),1)';
+C_N = min(length(C_EG),length(C_LG)); C_EG = C_EG(1:C_N); C_LG = C_LG(1:C_N);
+C_EG = C_EG-min(C_EG); C_EG=C_EG./max(C_EG); C_LG = C_LG-min(C_LG); C_LG=C_LG./max(C_LG);
+C_EG_detr = func_filter(detrend(C_EG), Fs, 0.035, 0.43); C_LG_detr = func_filter(detrend(C_LG), Fs, 0.03, 0.20);
+C_nTrials=7; C_interval=50; C_taskDur=5; C_first=1;
+C_expected = C_first + (0:C_nTrials-1)*C_interval;
+C_peakE=zeros(C_nTrials,1); C_peakL=zeros(C_nTrials,1); C_tVec = (0:C_N-1)';
+for i=1:C_nTrials
+    EGc=C_expected(i)+1; LGc=C_expected(i)+5;
+    s1=max(EGc-20,1); s2=min(EGc+20,length(C_EG_detr)); [~,idx]=max(C_EG_detr(s1:s2)); C_peakE(i)=s1+idx-1;
+    s1=max(LGc-20,1); s2=min(LGc+20,length(C_LG_detr)); [~,idx]=max(C_LG_detr(s1:s2)); C_peakL(i)=s1+idx-1;
+end
+C_u=zeros(length(C_LG_detr),1);
+for i=1:C_nTrials
+    [~,on]=min(abs(C_tVec-C_expected(i))); off=min(on+C_taskDur*Fs-1, length(C_u)); C_u(on:off)=1;
+end
+[~, C_LG_reg, ~] = KalmanDOI(fillmissing([C_EG_detr,C_LG_detr],'linear'), C_u, Fs);
+C_EG_blk = nan(C_blkL,C_nTrials); C_LG_blk = nan(C_blkL,C_nTrials);
+for i=1:C_nTrials
+    pk=C_peakE(i); s1=pk-C_pre_peak; s2=pk+C_post_peak-1;
+    if s1>0 && s2<=length(C_EG_detr); C_EG_blk(:,i)=C_EG_detr(s1:s2)-mean(C_EG_detr(s1:s1+C_pre_peak-1)); end
+    pk=C_peakL(i); s1=pk-C_pre_peak; s2=pk+C_post_peak-1;
+    if s1>0 && s2<=length(C_LG_reg); C_LG_blk(:,i)=C_LG_reg(s1:s2)-mean(C_LG_reg(s1:s1+C_pre_peak-1)); end
+end
+C_EG_meanBlk = mean(C_EG_blk,2,'omitnan'); C_LG_meanBlk = mean(C_LG_blk,2,'omitnan');
+C_EG_meanBlk = C_EG_meanBlk - C_EG_meanBlk(1); C_LG_meanBlk = C_LG_meanBlk - C_LG_meanBlk(1);
+C_tblk = (0:C_blkL-1)';
+
+
+% --- COMA (Healthy side) ---
+KH_pre_peak = 9; KH_post_peak = 21; KH_blkL = KH_pre_peak + KH_post_peak;
+channels_H = [1 3 4]; KH_EGall=[]; KH_LGall=[];
+for ch=channels_H
+    S = load(sprintf('BFI_Ch%d.mat',ch)); M = S.DB_all_clean;
+    KH_EGall=[KH_EGall, mean(M(1,:),1).']; KH_LGall=[KH_LGall, mean(M(2:3,:),1).'];
+end
+KH_N=min(size(KH_EGall,1), size(KH_LGall,1));
+KH_EG = mean(KH_EGall(1:KH_N,:),2); KH_LG = mean(KH_LGall(1:KH_N,:),2);
+KH_EG = KH_EG-min(KH_EG); KH_EG=KH_EG./max(KH_EG);
+KH_LG = KH_LG-min(KH_LG); KH_LG=KH_LG./max(KH_LG);
+KH_EG_detr = func_filter(detrend(KH_EG), Fs, 0.035, 0.43); KH_LG_detr = func_filter(detrend(KH_LG), Fs, 0.03, 0.20);
+KH_nTrials=10; KH_interval=45; KH_first=120; KH_taskDur=5;
+KH_expected = KH_first + (0:KH_nTrials-1)*KH_interval;
+KH_peakE=zeros(KH_nTrials,1); KH_peakL=zeros(KH_nTrials,1); KH_tVec=(0:KH_N-1)';
+for i=1:KH_nTrials
+    EGc=KH_expected(i)+1; LGc=KH_expected(i)+5;
+    s1=max(EGc-10,1); s2=min(EGc+10,length(KH_EG_detr)); [~,idx]=max(KH_EG_detr(s1:s2)); KH_peakE(i)=s1+idx-1;
+    s1=max(LGc-50,1); s2=min(LGc+50,length(KH_LG_detr)); [~,idx]=max(KH_LG_detr(s1:s2)); KH_peakL(i)=s1+idx-1;
+end
+KH_u=zeros(length(KH_LG_detr),1);
+for i=1:KH_nTrials
+    [~,on]=min(abs(KH_tVec-KH_expected(i))); off=min(on+KH_taskDur*Fs-1, length(KH_u)); KH_u(on:off)=1;
+end
+[~, KH_LG_reg, ~] = KalmanDOI(fillmissing([KH_EG_detr,KH_LG_detr],'linear'), KH_u, Fs);
+KH_EG_blk = nan(KH_blkL,KH_nTrials); KH_LG_blk = nan(KH_blkL,KH_nTrials);
+for i=1:KH_nTrials
+    pk=KH_peakE(i); s1=pk-KH_pre_peak; s2=pk+KH_post_peak-1;
+    if s1>0 && s2<=length(KH_EG_detr); KH_EG_blk(:,i)=KH_EG_detr(s1:s2)-mean(KH_EG_detr(s1:s1+KH_pre_peak-1)); end
+    pk=KH_peakL(i); s1=pk-KH_pre_peak; s2=pk+KH_post_peak-1;
+    if s1>0 && s2<=length(KH_LG_reg); KH_LG_blk(:,i)=KH_LG_reg(s1:s2)-mean(KH_LG_reg(s1:s1+KH_pre_peak-1)); end
+end
+KH_EG_meanBlk = mean(KH_EG_blk,2,'omitnan'); KH_LG_meanBlk = mean(KH_LG_blk,2,'omitnan');
+KH_EG_meanBlk = KH_EG_meanBlk - KH_EG_meanBlk(1); KH_LG_meanBlk = KH_LG_meanBlk - KH_LG_meanBlk(1);
+KH_tblk = (0:KH_blkL-1)';
+
+
+% --- COMA (TBI side) ---
+K_pre_peak = 9; K_post_peak = 21; K_blkL = K_pre_peak + K_post_peak;
+channels_TBI = [5 6 7]; K_EGall=[]; K_LGall=[];
+for ch=channels_TBI
+    S = load(sprintf('BFI_Ch%d.mat',ch)); M = S.DB_all_clean;
+    K_EGall=[K_EGall, mean(M(1,:),1).']; K_LGall=[K_LGall, mean(M(2:3,:),1).'];
+end
+K_N=min(size(K_EGall,1), size(K_LGall,1));
+K_EG = mean(K_EGall(1:K_N,:),2); K_LG = mean(K_LGall(1:K_N,:),2);
+K_EG=K_EG-min(K_EG); K_EG=K_EG./max(K_EG); K_LG=K_LG-min(K_LG); K_LG=K_LG./max(K_LG);
+K_EG_detr = func_filter(detrend(K_EG), Fs, 0.035, 0.43); K_LG_detr = func_filter(detrend(K_LG), Fs, 0.03, 0.20);
+K_nTrials=10; K_interval=45; K_first=120; K_taskDur=5;
+K_expected = K_first + (0:K_nTrials-1)*K_interval;
+K_peakE=zeros(K_nTrials,1); K_peakL=zeros(K_nTrials,1); K_tVec=(0:K_N-1)';
+for i=1:K_nTrials
+    EGc=K_expected(i)+1; LGc=K_expected(i)+5;
+    s1=max(EGc-10,1); s2=min(EGc+10,length(K_EG_detr)); [~,idx]=max(K_EG_detr(s1:s2)); K_peakE(i)=s1+idx-1;
+    s1=max(LGc-70,1); s2=min(LGc+70,length(K_LG_detr)); [~,idx]=max(K_LG_detr(s1:s2)); K_peakL(i)=s1+idx-1;
+end
+K_u=zeros(length(K_LG_detr),1);
+for i=1:K_nTrials
+    [~,on]=min(abs(K_tVec-K_expected(i))); off=min(on+K_taskDur*Fs-1, length(K_u)); K_u(on:off)=1;
+end
+[~, K_LG_reg, ~] = KalmanDOI(fillmissing([K_EG_detr,K_LG_detr],'linear'), K_u, Fs);
+K_EG_blk = nan(K_blkL,K_nTrials); K_LG_blk = nan(K_blkL,K_nTrials);
+for i=1:K_nTrials
+    pk=K_peakE(i); s1=pk-K_pre_peak; s2=pk+K_post_peak-1;
+    if s1>0 && s2<=length(K_EG_detr); K_EG_blk(:,i)=K_EG_detr(s1:s2)-mean(K_EG_detr(s1:s1+K_pre_peak-1)); end
+    pk=K_peakL(i); s1=pk-K_pre_peak; s2=pk+K_post_peak-1;
+    if s1>0 && s2<=length(K_LG_reg); K_LG_blk(:,i)=K_LG_reg(s1:s2)-mean(K_LG_reg(s1:s1+K_pre_peak-1)); end
+end
+K_EG_meanBlk = mean(K_EG_blk,2,'omitnan'); K_LG_meanBlk = mean(K_LG_blk,2,'omitnan');
+K_EG_meanBlk = K_EG_meanBlk - K_EG_meanBlk(1); K_LG_meanBlk = K_LG_meanBlk - K_LG_meanBlk(1);
+K_tblk = (0:K_blkL-1)';
+
+
+%% ===============================================================
+% PARAMETERS AND DATA PREPARATION FOR PLOTTING
+% ===============================================================
+
+% Define Line Styles for Groups
+line_style_H =  '-';     % Healthy: Solid
+line_style_Co = '-';   % Covert: Dashed
+line_style_KH = '-';    % Coma-H: Dotted
+line_style_KT = '-';   % Coma-TBI: Dash-dot
+
+% Define Colors for Groups (Using your original colors for contrast)
+col_H  = [0.2 0.45 0.95]; % Healthy (Blue)
+col_Co = [0.1 0.6 0.2];  % Covert (Green)
+col_KH = [1.0 0.6 0.1];  % Coma - Healthy side (Orange)
+col_KT = [0.9 0.2 0.2];  % Coma - TBI side (Red)
+
+% Determine unified time vector and limits
+t_len = min([length(H_tblk), length(C_tblk), length(KH_tblk), length(K_tblk)]);
+t = (0:t_len-1)';
+t_shift = t - 2; % Shift time axis
+
+% Plotting Data
+H_EG_plot  = movmean(H_EG_meanBlk(1:t_len), 3);
+C_EG_plot  = movmean(C_EG_meanBlk(1:t_len), 3);
+KH_EG_plot = movmean(KH_EG_meanBlk(1:t_len), 3);
+K_EG_plot  = movmean(K_EG_meanBlk(1:t_len), 3);
+
+H_LG_plot  = movmean(H_LG_meanBlk(1:t_len), 3);
+C_LG_plot  = movmean(C_LG_meanBlk(1:t_len), 3);
+KH_LG_plot = movmean(KH_LG_meanBlk(1:t_len), 3);
+K_LG_plot  = movmean(K_LG_meanBlk(1:t_len), 3);
+
+% Error Data (only for Healthy group, as per your previous plots)
+EG_stdBlk_H = std(H_EG_blk,0,2,'omitnan')/sqrt(H_nTrials);
+LG_stdBlk_H = std(H_LG_blk,0,2,'omitnan')/sqrt(H_nTrials);
+
+% Define common axis limits
+yLims = [-0.15 0.4];
+xLims = [-5 28]; 
+xTicks = [ 0 10 20 ];
+taskYFill = [yLims(1) yLims(1) yLims(2) yLims(2)]; 
+
+% Y-axis ticks and labels (for invisible ticks at -0.1 and 0.3)
+yTicksLocations = [-0.2, -0.1 ,0,0.1,  0.2,0.3, 0.4];
+yTicksLabels = {'', '', '0','', '0.2', '', '0.4'};
+
+
+% --- Helper function for error plot (must be in a separate file OR end of script) ---
+function h = plot_error_patch(x, y_mean, y_std, color)
+    y_upper = y_mean(1:length(x)) + y_std(1:length(x));
+    y_lower = y_mean(1:length(x)) - y_std(1:length(x));
+    h = fill([x; flipud(x)], [y_lower; flipud(y_upper)], color, ...
+          'FaceAlpha',0.15, 'EdgeColor','none');
+end
+% -----------------------------------------------------------------------------------
+
+
+%% ===============================================================
+% FIGURE GENERATION (2x2 Layout: EG and LG side-by-side)
+% ===============================================================
+figure('Color','w','Position',[100 200 1800 500]); % Wide figure for 2x2 layout
+t = tiledlayout(1,2); % Creating a 1x2 layout for the two main plots
+t.TileSpacing = 'compact';
+t.Padding = 'compact';
+
+%% ------------------ Panel 1: EARLY GATE (EG) ------------------
+ax1 = nexttile; hold on;
+
+
+
+% Task Shading
+fill([0 5 5 0], taskYFill, c_task, 'FaceAlpha',0.25, 'EdgeColor','none');
+yline(0, '--k', 'LineWidth', 1); % Y=0 Line
+
+% Plot Healthy EG with shaded error (Solid Line)
+EG_H_std = EG_stdBlk_H(1:t_len);
+plot_error_patch(t_shift, H_EG_plot, EG_H_std, col_H);
+
+
+h1 = plot(t_shift, H_EG_plot, 'Color',col_H, 'LineStyle',line_style_H, 'LineWidth',3, 'Marker','.', 'MarkerSize',20);
+
+% Plot Covert EG (Dashed Line)
+h2 = plot(t_shift, C_EG_plot, 'Color',col_Co, 'LineStyle',line_style_Co, 'LineWidth',3, 'Marker','.', 'MarkerSize',20);
+
+% Plot Coma - H side EG (Dotted Line)
+h3 = plot(t_shift, KH_EG_plot, 'Color',col_KH, 'LineStyle',line_style_KH, 'LineWidth',3, 'Marker','.', 'MarkerSize',20);
+
+% Plot Coma - TBI side EG (Dash-dot Line)
+h4 = plot(t_shift, K_EG_plot, 'Color',col_KT, 'LineStyle',line_style_KT, 'LineWidth',3, 'Marker','.', 'MarkerSize',20);
+
+
+title('(a) Early Gate', 'FontWeight', 'bold', FontSize= 20);
+ylabel('rBFi', 'FontWeight', 'bold');
+xlabel('Time (s)', 'FontWeight', 'bold');
+
+ylim(yLims); xlim(xLims);
+yticks(yTicksLocations); yticklabels(yTicksLabels);
+xticks(xTicks);
+set(gca, 'Box', 'off', 'TickDir', 'out', 'XColor', [0.3 0.3 0.3], 'YColor', [0.3 0.3 0.3]);
+% grid on;
+
+title('(a) Early Gate', 'FontWeight', 'bold', FontSize= 26);
+
+%% ------------------ Panel 2: LATE GATE (LG) ------------------
+ax2 = nexttile; hold on;
+% Task Shading
+
+fill([0 5 5 0], taskYFill, c_task, 'FaceAlpha',0.25, 'EdgeColor','none');
+yline(0, '--k', 'LineWidth', 1); % Y=0 Line
+
+% Plot Healthy LG with shaded error (Solid Line)
+LG_H_std = LG_stdBlk_H(1:t_len);
+plot_error_patch(t_shift, H_LG_plot, LG_H_std, col_H);
+h5 = plot(t_shift, H_LG_plot, 'Color',col_H, 'LineStyle',line_style_H, 'LineWidth',3, 'Marker','.', 'MarkerSize',20);
+
+% Plot Covert LG (Dashed Line)
+h6 = plot(t_shift, C_LG_plot, 'Color',col_Co, 'LineStyle',line_style_Co, 'LineWidth',3, 'Marker','.', 'MarkerSize',20);
+
+% Plot Coma - H side LG (Dotted Line)
+h7 = plot(t_shift, KH_LG_plot, 'Color',col_KH, 'LineStyle',line_style_KH, 'LineWidth',3, 'Marker','.', 'MarkerSize',20);
+
+% Plot Coma - TBI side LG (Dash-dot Line)
+h8 = plot(t_shift, K_LG_plot, 'Color',col_KT, 'LineStyle',line_style_KT, 'LineWidth',3, 'Marker','.', 'MarkerSize',20);
+
+
+title('(b) Late Gate', 'FontWeight', 'bold', FontSize= 20);
+xlabel('Time (s)', 'FontWeight', 'bold');
+
+ylim(yLims); xlim(xLims);
+yticks(yTicksLocations); yticklabels(yTicksLabels);
+xticks(xTicks);
+set(gca, 'Box', 'off', 'TickDir', 'out',  'XColor', [0.3 0.3 0.3], 'YColor', [0.3 0.3 0.3]);
+% grid on;
+title('(b) Late Gate', 'FontWeight', 'bold', FontSize= 26);
+
+
+%% ------------------ ONE LEGEND for ALL ------------------
+% Create dummy handles for the legend
+h_Task_leg = plot(nan, nan, 'Color', c_task_legend, 'LineWidth', 10); % Using a thick line for a solid block appearance
+h_H_leg  = plot(nan,nan,'Color',col_H, 'LineStyle',line_style_H, 'LineWidth',3);
+h_Co_leg = plot(nan,nan,'Color',col_Co, 'LineStyle',line_style_Co, 'LineWidth',3);
+h_KH_leg = plot(nan,nan,'Color',col_KH, 'LineStyle',line_style_KH, 'LineWidth',3);
+h_KT_leg = plot(nan,nan,'Color',col_KT, 'LineStyle',line_style_KT, 'LineWidth',3);
+
+txt = {
+    'Task',    
+    'Healthy (n=5)',         
+    'MCS   (n=1)',          
+    'UWS   (n=1): Contralesional', 
+    'UWS   (n=1): Ipsilesional'    
+};
+
+
+
+% Create the legend with vertical orientation
+lgd = legend([h_Task_leg, h_H_leg, h_Co_leg, h_KH_leg, h_KT_leg], txt);
+set(lgd,'Box','off','FontSize',16);
+
+
+% Move the legend slightly to the top (overriding the tile's center default)
+pos = lgd.Position; 
+pos(2) = pos(2) - 0.07; % Increase the 'bottom' value
+set(lgd,'Position',pos);
+
+
+%% ===============================================================
+% SAVE FIGURE AS HIGH-RESOLUTION TIFF
+% ===============================================================
+figure_handle = gcf;
+filename = 'Figure.4.tif';
+resolution = '-r600'; 
+format = '-dtiff';    
+
+print(figure_handle, filename, format, resolution);
+% 
+% disp(['Figure saved successfully as: ' filename ' at 600 DPI.']);
+
+% Note: The definition of plot_error_patch is moved to the top for clarity.
+% For true function separation in MATLAB, it should be in a separate .m file.
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
